@@ -6,6 +6,8 @@ const Entry = require('./entry')
 
 const hasItems = arr => arr && arr.length > 0
 
+let fetching = 0
+
 class EntryIO {
   // Fetch log graphs in parallel
   static async fetchParallel (ipfs, hashes, { length, exclude = [], timeout, concurrency, onProgressCallback }) {
@@ -90,7 +92,8 @@ class EntryIO {
           : null
 
         const addToResults = (entry) => {
-          if (Entry.isEntry(entry)) {
+          if (Entry.isEntry(entry) && !cache[entry.hash]) {
+            // console.log("::", entry.hash, entry.payload.value)
             const ts = entry.clock.time
 
             // Update min/max clocks
@@ -123,7 +126,7 @@ class EntryIO {
               // If we're fetching entries up to certain length,
               // fetch the next if result is filled up, to make sure we "check"
               // the next entry if its clock is later than what we have in the result
-              if (result.length <= length || ts >= minClock) {
+              if (result.length < length || ts > minClock || (ts === minClock && !cache[entry.hash])) {
                 entry.next.forEach(e => addToLoadingQueue(e, calculateIndex(0)))
               }
               if ((result.length + entry.refs.length) <= length) {
@@ -138,8 +141,12 @@ class EntryIO {
         }
 
         try {
+          fetching++
+          // console.log(fetching)
           // Load the entry
           const entry = await Entry.fromMultihash(ipfs, hash)
+          fetching--
+          // console.log(fetching)
 
           // Add it to the results
           addToResults(entry)
@@ -147,6 +154,7 @@ class EntryIO {
           // Simulate network latency (for debugging purposes)
           if (delay > 0) {
             const sleep = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms))
+            console.log("Sleeping...", delay)
             await sleep(delay)
           }
           resolve()
@@ -163,7 +171,7 @@ class EntryIO {
       if (running < concurrency) {
         const nexts = getNextFromQueue(concurrency)
         running += nexts.length
-        await pMap(nexts, fetchEntry)
+        await pMap(nexts, fetchEntry, { concurrency })
         running -= nexts.length
       }
     }
